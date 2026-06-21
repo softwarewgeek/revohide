@@ -83,7 +83,7 @@ typedef struct {
 // ── Logging toggle helpers (used by DOSettingsController) ─────────────────────
 + (BOOL)isLoggingEnabled {
     int fd = shm_open(RH_SHM_NAME, O_RDONLY, 0);
-    if (fd < 0) return YES; // default on if not yet created
+    if (fd < 0) return NO; // default off if shm not yet created
     void *m = mmap(NULL, RH_SHM_TOTAL, PROT_READ, MAP_SHARED, fd, 0);
     close(fd);
     if (m == MAP_FAILED) return YES;

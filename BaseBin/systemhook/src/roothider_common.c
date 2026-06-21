@@ -163,7 +163,7 @@ static rh_shm_t *rh_shm_map(void)
 	close(fd);
 	if (m == MAP_FAILED) return NULL;
 	ptr = (rh_shm_t *)m;
-	if (is_new) ptr->enabled = 1;
+	if (is_new) ptr->enabled = 0; // default off — enable from Dopamine Settings
 	return ptr;
 }
 
