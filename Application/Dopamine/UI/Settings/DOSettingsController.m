@@ -35,7 +35,7 @@
 
 typedef struct {
     volatile uint32_t write_pos;
-    volatile uint32_t reserved;
+    volatile uint32_t enabled;   // 1 = logging on, 0 = off
     char buf[RH_SHM_TOTAL - 8];
 } rh_ui_shm_t;
 
@@ -72,10 +72,37 @@ typedef struct {
     close(fd);
     if (m == MAP_FAILED) return;
     rh_ui_shm_t *shm = (rh_ui_shm_t *)m;
+    uint32_t savedEnabled = shm->enabled;
     shm->write_pos = 0;
     shm->buf[0] = '\0';
+    shm->enabled = savedEnabled; // preserve toggle state after clear
     munmap(m, RH_SHM_TOTAL);
     _lastWritePos = 0;
+}
+
+// ── Logging toggle helpers (used by DOSettingsController) ─────────────────────
++ (BOOL)isLoggingEnabled {
+    int fd = shm_open(RH_SHM_NAME, O_RDONLY, 0);
+    if (fd < 0) return YES; // default on if not yet created
+    void *m = mmap(NULL, RH_SHM_TOTAL, PROT_READ, MAP_SHARED, fd, 0);
+    close(fd);
+    if (m == MAP_FAILED) return YES;
+    rh_ui_shm_t *shm = (rh_ui_shm_t *)m;
+    BOOL result = (shm->enabled != 0);
+    munmap(m, RH_SHM_TOTAL);
+    return result;
+}
+
++ (void)setLoggingEnabled:(BOOL)on {
+    int fd = shm_open(RH_SHM_NAME, O_CREAT | O_RDWR, 0600);
+    if (fd < 0) return;
+    struct stat st;
+    if (fstat(fd, &st) == 0 && st.st_size == 0) ftruncate(fd, RH_SHM_TOTAL);
+    void *m = mmap(NULL, RH_SHM_TOTAL, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+    if (m == MAP_FAILED) return;
+    ((rh_ui_shm_t *)m)->enabled = on ? 1 : 0;
+    munmap(m, RH_SHM_TOTAL);
 }
 
 - (void)viewDidLoad {
@@ -561,6 +588,16 @@ typedef struct {
         revohideGroupSpecifier.name = @"Revohide";
         [specifiers addObject:revohideGroupSpecifier];
 
+        PSSpecifier *loggingToggle = [PSSpecifier preferenceSpecifierNamed:@"Hook Logging"
+            target:self
+            set:@selector(setRhLoggingEnabled:specifier:)
+            get:@selector(getRhLoggingEnabled:)
+            detail:nil
+            cell:PSSwitchCell
+            edit:nil];
+        [loggingToggle setProperty:@"waveform" forKey:@"image"];
+        [specifiers addObject:loggingToggle];
+
         PSSpecifier *viewLogSpecifier = [PSSpecifier preferenceSpecifierNamed:@"" target:self set:defSetter get:defGetter detail:nil cell:PSStaticTextCell edit:nil];
         [viewLogSpecifier setProperty:@"View Hook Log" forKey:@"title"];
         [viewLogSpecifier setProperty:[DOButtonCell class] forKey:@"cellClass"];
@@ -942,6 +979,14 @@ typedef struct {
     [[DOUIManager sharedInstance] resetSettings];
     [self.navigationController popToRootViewControllerAnimated:YES];
     [self reloadSpecifiers];
+}
+
+- (id)getRhLoggingEnabled:(PSSpecifier *)specifier {
+    return @([DORevohideLogViewController isLoggingEnabled]);
+}
+
+- (void)setRhLoggingEnabled:(id)value specifier:(PSSpecifier *)specifier {
+    [DORevohideLogViewController setLoggingEnabled:[value boolValue]];
 }
 
 - (void)viewRevohideLogPressed

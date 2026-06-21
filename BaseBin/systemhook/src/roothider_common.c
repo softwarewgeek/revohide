@@ -143,7 +143,7 @@ int syscall__sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, const
 
 typedef struct {
 	volatile uint32_t write_pos;  // next byte to write (monotonic within buf)
-	volatile uint32_t reserved;
+	volatile uint32_t enabled;    // 1 = logging on (default), 0 = off (toggled from UI)
 	char buf[RH_SHM_TOTAL - 8];
 } rh_shm_t;
 
@@ -156,20 +156,21 @@ static rh_shm_t *rh_shm_map(void)
 	if (fd < 0) return NULL;
 
 	struct stat st;
-	if (fstat(fd, &st) == 0 && st.st_size == 0)
-		ftruncate(fd, RH_SHM_TOTAL);
+	int is_new = (fstat(fd, &st) == 0 && st.st_size == 0);
+	if (is_new) ftruncate(fd, RH_SHM_TOTAL);
 
 	void *m = mmap(NULL, RH_SHM_TOTAL, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	close(fd);
 	if (m == MAP_FAILED) return NULL;
 	ptr = (rh_shm_t *)m;
+	if (is_new) ptr->enabled = 1;
 	return ptr;
 }
 
 static void rh_log(const char *fmt, ...)
 {
 	rh_shm_t *shm = rh_shm_map();
-	if (!shm) return;
+	if (!shm || !shm->enabled) return;
 
 	char line[512];
 	time_t now = time(NULL);

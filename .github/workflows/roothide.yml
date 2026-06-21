@@ -108,32 +108,28 @@ jobs:
           gh release delete latest --yes --cleanup-tag --repo "${{ github.repository }}" 2>/dev/null || true
           gh release create latest \
             --repo "${{ github.repository }}" \
-            --title "Revohide Dopamine ${{ env.version }}" \
+            --title "Revohide Dopamine ${{ env.version }} • iOS 15.x – 16.7.16" \
             --notes "## Install
-Install via **TrollStore** (rename .tipa → .ipa if needed).
+Install via **TrollStore** — rename .tipa to .ipa if needed.
 
-## What's in this build
+## Supported iOS versions
+- iOS 15.0 – 15.8.x ✓
+- iOS 16.0 – 16.7.16 ✓
 
-### Jailbreak Detection Bypass (Revohide)
-- **Revolut bypass confirmed working** on iOS 15.8.x
-- Fakes \`kern.boottime\` so apps can't detect respring by comparing boottime vs process start times
-- Hooks \`NSProcessInfo.systemUptime\` to return a value consistent with the faked boottime
-- Anchors fake boottime to **SpringBoard's start time** — works correctly after multiple resprings (Sileo installs, tweak installs, etc.)
-- Log viewer built into Dopamine Settings → Revohide — shows what hooks fired in real time, with Copy and Share buttons
-- Logs stored in **RAM only** (POSIX shared memory) — no files written to disk, undetectable by app filesystem scans
+## What's different from stock Dopamine
 
-### Base
-- Built on **Dopamine2-roothide 2.4.9.25** (upstream)
-- **iOS 15.x and 16.7.16** support
-- Hides jailbreak traces from apps (roothide)
-- Compatible: iPhone 7 / iOS 15.8.x tested
+### Banking app detection bypass
+- Bypasses jailbreak detection on banking apps such as **Revolut**, and others that detect resprings
+- Works after multiple resprings — installing tweaks from Sileo will not break the bypass
+- Built-in diagnostic log viewer in Settings → Revohide to see what was intercepted
 
-### UI Changes
-- Update Available notification removed
-- Revohide log console added in Settings (terminal-style, live auto-refresh every 2s)
+### Diagnostic log
+- Enable/disable logging with a toggle in Settings → Revohide → Hook Logging
+- View real-time log of what was intercepted (updates every 2 seconds)
+- Copy or share the log to send for troubleshooting
 
----
-Built from commit \`${{ github.sha }}\`" \
+## Based on
+Dopamine2-roothide by roothide — https://github.com/roothide/Dopamine2-roothide" \
             --target "${{ github.sha }}" \
             "$TIPA"
         env:
