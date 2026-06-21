@@ -10,6 +10,7 @@
 #include <sys/proc_info.h>
 #include <time.h>
 #include <dispatch/dispatch.h>
+#include <dlfcn.h>
 #include <objc/runtime.h>
 
 #include "roothider.h"
@@ -271,16 +272,35 @@ void rh_hook_nsprocessinfo(void)
 {
 	if (!rh_respring_offset()) return;
 
-	Class cls = objc_getClass("NSProcessInfo");
+	// Load libobjc at runtime via dlsym — systemhook.dylib has no libobjc linkage,
+	// so we cannot call ObjC runtime functions directly at link time.
+	void *libobjc = dlopen("/usr/lib/libobjc.A.dylib", RTLD_LAZY | RTLD_NOLOAD);
+	if (!libobjc) return;
+
+	typedef void *(*fn_objc_getClass)(const char *);
+	typedef SEL  (*fn_sel_registerName)(const char *);
+	typedef Method (*fn_class_getInstanceMethod)(Class, SEL);
+	typedef IMP    (*fn_method_getImplementation)(Method);
+	typedef void   (*fn_method_setImplementation)(Method, IMP);
+
+	fn_objc_getClass            p_getClass  = (fn_objc_getClass)           dlsym(libobjc, "objc_getClass");
+	fn_sel_registerName         p_selReg    = (fn_sel_registerName)         dlsym(libobjc, "sel_registerName");
+	fn_class_getInstanceMethod  p_getMethod = (fn_class_getInstanceMethod)  dlsym(libobjc, "class_getInstanceMethod");
+	fn_method_getImplementation p_getIMP    = (fn_method_getImplementation) dlsym(libobjc, "method_getImplementation");
+	fn_method_setImplementation p_setIMP    = (fn_method_setImplementation) dlsym(libobjc, "method_setImplementation");
+
+	if (!p_getClass || !p_selReg || !p_getMethod || !p_getIMP || !p_setIMP) return;
+
+	Class cls = (Class)p_getClass("NSProcessInfo");
 	if (!cls) return;
-	SEL sel = sel_registerName("systemUptime");
-	Method m = class_getInstanceMethod(cls, sel);
+	SEL sel = p_selReg("systemUptime");
+	Method m = p_getMethod(cls, sel);
 	if (!m) return;
 
-	IMP orig = method_getImplementation(m);
+	IMP orig = p_getIMP(m);
 	if (orig == (IMP)hook_systemUptime) return; // already hooked
 	orig_systemUptime = (NSTimeInterval (*)(id, SEL))orig;
-	method_setImplementation(m, (IMP)hook_systemUptime);
+	p_setIMP(m, (IMP)hook_systemUptime);
 	rh_log("rh_hook_nsprocessinfo: hooked, uptime_adj=%lds\n", rh_uptime_adjustment());
 }
 
