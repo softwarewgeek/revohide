@@ -185,9 +185,11 @@ static long rh_respring_offset(void) {
 	return (gap >= 60) ? gap : 0;
 }
 
-// Find the earliest process start time that is significantly after real kernel
-// boot. This approximates when SpringBoard (re)started after the respring.
-// Result is cached after the first call.
+// Find the most recent respring epoch by reading SpringBoard's start time.
+// SpringBoard is killed and restarted on EVERY respring, so its start time
+// always reflects the latest respring — even after multiple Sileo-triggered
+// resprings. Using the earliest post-boot process would anchor to the FIRST
+// respring and expose large gaps after subsequent resprings.
 static time_t rh_find_respring_epoch(void) {
 	static time_t cached = 0;
 	if (cached) return cached;
@@ -207,21 +209,29 @@ static time_t rh_find_respring_epoch(void) {
 
 	time_t real_boot = rh_get_real_boottime();
 	size_t count = sz / sizeof(struct kinfo_proc);
-	time_t earliest = 0;
+	time_t springboard_start = 0;
+	time_t max_start = 0; // fallback: latest post-respring process
 
 	for (size_t i = 0; i < count; i++) {
 		time_t ps = procs[i].kp_proc.p_starttime.tv_sec;
-		// Processes that started 55+ seconds after real kernel boot must have
-		// started after the respring.
-		if (ps >= real_boot + 55) {
-			if (!earliest || ps < earliest)
-				earliest = ps;
+		if (ps < real_boot + 55) continue; // started within 55s of boot — not post-respring
+
+		// Primary: find SpringBoard (the definitive respring marker)
+		if (strncmp(procs[i].kp_proc.p_comm, "SpringBoard", 11) == 0) {
+			springboard_start = ps;
 		}
+
+		// Fallback: track the latest cluster start time
+		if (ps > max_start) max_start = ps;
 	}
 
 	free(procs);
-	cached = earliest;
-	return earliest;
+
+	// Use SpringBoard's start if found; otherwise fall back to the latest
+	// process cluster (handles edge cases where SpringBoard name differs)
+	time_t result = springboard_start ? springboard_start : max_start;
+	cached = result;
+	return result;
 }
 
 // The timestamp we report as kern.boottime.
