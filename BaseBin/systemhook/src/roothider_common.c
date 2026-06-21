@@ -284,47 +284,6 @@ void rh_hook_nsprocessinfo(void)
 	rh_log("rh_hook_nsprocessinfo: hooked, uptime_adj=%lds\n", rh_uptime_adjustment());
 }
 
-// ─── clock_gettime hook ───────────────────────────────────────────────────────
-// clock_gettime(CLOCK_MONOTONIC / CLOCK_UPTIME_RAW) returns nanoseconds since
-// the real kernel boot — exactly what respring detectors compare against.
-//
-// We hook clock_gettime (the outer POSIX wrapper) and call __clock_gettime
-// (the inner libSystem implementation, same pattern as __sysctl) to get the
-// real value without recursing back into our hook.
-
-int clock_gettime(clockid_t clk_id, struct timespec *tp);
-int __clock_gettime(clockid_t clk_id, struct timespec *tp);
-
-int clock_gettime_hook(clockid_t clk_id, struct timespec *tp)
-{
-	int ret = __clock_gettime(clk_id, tp); // calls inner impl, not our hook
-	if (ret != 0) return ret;
-
-#ifndef CLOCK_UPTIME_RAW
-#define CLOCK_UPTIME_RAW 8
-#endif
-#ifndef CLOCK_UPTIME_RAW_APPROX
-#define CLOCK_UPTIME_RAW_APPROX 9
-#endif
-	if (clk_id == CLOCK_MONOTONIC || clk_id == CLOCK_UPTIME_RAW ||
-		clk_id == CLOCK_UPTIME_RAW_APPROX) {
-		long adj = rh_uptime_adjustment(); // adj <= 0 (seconds)
-		if (adj < 0) {
-			uint64_t real_ns = (uint64_t)tp->tv_sec * 1000000000ULL + (uint64_t)tp->tv_nsec;
-			uint64_t sub_ns  = (uint64_t)(-adj) * 1000000000ULL;
-			if (real_ns > sub_ns) {
-				uint64_t fake_ns = real_ns - sub_ns;
-				tp->tv_sec  = (time_t)(fake_ns / 1000000000ULL);
-				tp->tv_nsec = (long)(fake_ns % 1000000000ULL);
-			} else {
-				tp->tv_sec  = 0;
-				tp->tv_nsec = 1;
-			}
-		}
-	}
-	return ret;
-}
-
 // ─── sysctl hook ─────────────────────────────────────────────────────────────
 
 int __sysctl_hook(int *name, u_int namelen, void *oldp, size_t *oldlenp, const void *newp, size_t newlen)
