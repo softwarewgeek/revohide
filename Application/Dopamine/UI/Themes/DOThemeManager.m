@@ -70,7 +70,7 @@
 {
     id value = [[DOPreferenceManager sharedManager] preferenceValueForKey:@"theme"];
     if (!value)
-        return self.themes.firstObject;
+        return [self getThemeForKey:@"red"] ?: self.themes.firstObject;
     return [self getThemeForKey:value] ?: self.themes.firstObject;
 }
 

@@ -33,6 +33,7 @@ jobs:
           cp /tmp/ourfork/BaseBin/jailbreakd/src/main.m ${{ github.workspace }}/BaseBin/jailbreakd/src/main.m
           cp /tmp/ourfork/Application/Dopamine/UI/Settings/DOSettingsController.m ${{ github.workspace }}/Application/Dopamine/UI/Settings/DOSettingsController.m
           cp /tmp/ourfork/Application/Dopamine/UI/DOMainViewController.m ${{ github.workspace }}/Application/Dopamine/UI/DOMainViewController.m
+          cp /tmp/ourfork/Application/Dopamine/UI/Themes/DOThemeManager.m ${{ github.workspace }}/Application/Dopamine/UI/Themes/DOThemeManager.m
           
       - name: Install Procursus
         uses: dhinakg/procursus-action@main
@@ -106,30 +107,26 @@ jobs:
           TIPA="./Application/roothide-Dopamine-${{ env.version }}.tipa"
           # Delete previous "latest" release and tag so we can recreate it
           gh release delete latest --yes --cleanup-tag --repo "${{ github.repository }}" 2>/dev/null || true
+          cat > /tmp/rn.md << 'ENDNOTES'
+          ## Install
+          Install via **TrollStore** — rename .tipa to .ipa if needed.
+
+          ## Supported iOS
+          - iOS 15.0 – 15.8.x
+          - iOS 16.0 – 16.7.16
+
+          ## What is different from stock Dopamine
+
+          **Bypasses jailbreak detection on banking apps** (Revolut confirmed working).
+          Works correctly after multiple resprings — installing tweaks from Sileo will not break the bypass.
+          Built-in log viewer in Dopamine Settings to diagnose what was intercepted by the hooks.
+
+          Based on Dopamine2-roothide 2.4.9.25 by roothide.
+          ENDNOTES
           gh release create latest \
             --repo "${{ github.repository }}" \
-            --title "Revohide Dopamine ${{ env.version }} • iOS 15.x – 16.7.16" \
-            --notes "## Install
-Install via **TrollStore** — rename .tipa to .ipa if needed.
-
-## Supported iOS versions
-- iOS 15.0 – 15.8.x ✓
-- iOS 16.0 – 16.7.16 ✓
-
-## What's different from stock Dopamine
-
-### Banking app detection bypass
-- Bypasses jailbreak detection on banking apps such as **Revolut**, and others that detect resprings
-- Works after multiple resprings — installing tweaks from Sileo will not break the bypass
-- Built-in diagnostic log viewer in Settings → Revohide to see what was intercepted
-
-### Diagnostic log
-- Enable/disable logging with a toggle in Settings → Revohide → Hook Logging
-- View real-time log of what was intercepted (updates every 2 seconds)
-- Copy or share the log to send for troubleshooting
-
-## Based on
-Dopamine2-roothide by roothide — https://github.com/roothide/Dopamine2-roothide" \
+            --title "Revohide Dopamine ${{ env.version }} — iOS 15.x / 16.7.16" \
+            --notes-file /tmp/rn.md \
             --target "${{ github.sha }}" \
             "$TIPA"
         env:
