@@ -137,10 +137,9 @@ static void rh_log(const char *fmt, ...)
 	if (!f) f = fopen("/var/mobile/revohide.log", "a");
 	if (!f) return;
 
-	struct timespec ts = {0};
-	syscall(SYS_clock_gettime, CLOCK_REALTIME, &ts);
+	// Use time(NULL) — avoids calling clock_gettime which we hook ourselves.
 	const char *prog = getprogname();
-	fprintf(f, "[%ld][%s:%d] ", (long)ts.tv_sec, prog ? prog : "?", (int)getpid());
+	fprintf(f, "[%ld][%s:%d] ", (long)time(NULL), prog ? prog : "?", (int)getpid());
 
 	va_list ap;
 	va_start(ap, fmt);
@@ -288,17 +287,17 @@ void rh_hook_nsprocessinfo(void)
 // ─── clock_gettime hook ───────────────────────────────────────────────────────
 // clock_gettime(CLOCK_MONOTONIC / CLOCK_UPTIME_RAW) returns nanoseconds since
 // the real kernel boot — exactly what respring detectors compare against.
+//
+// We hook clock_gettime (the outer POSIX wrapper) and call __clock_gettime
+// (the inner libSystem implementation, same pattern as __sysctl) to get the
+// real value without recursing back into our hook.
 
 int clock_gettime(clockid_t clk_id, struct timespec *tp);
-
-// Always call via direct syscall inside the hook to avoid re-entering ourself.
-int syscall__clock_gettime(clockid_t clk_id, struct timespec *tp) {
-	return (int)syscall(SYS_clock_gettime, clk_id, tp);
-}
+int __clock_gettime(clockid_t clk_id, struct timespec *tp);
 
 int clock_gettime_hook(clockid_t clk_id, struct timespec *tp)
 {
-	int ret = syscall__clock_gettime(clk_id, tp); // bypass our hook
+	int ret = __clock_gettime(clk_id, tp); // calls inner impl, not our hook
 	if (ret != 0) return ret;
 
 #ifndef CLOCK_UPTIME_RAW
