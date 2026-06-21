@@ -491,14 +491,19 @@ void roothide_init_with_checkin(const char* rootdir)
 	dlopen(JBROOT_PATH("/usr/lib/roothideinit.dylib"), RTLD_NOW);
 }
 
+extern int clock_gettime(clockid_t, struct timespec *);
+extern int clock_gettime_hook(clockid_t, struct timespec *);
+extern void rh_hook_nsprocessinfo(void);
+
 void roothide_init_with_executable(const char* executable)
 {
-	// Hook sysctl in all processes (system daemons and apps) to hide respring
-	// artifacts from banking/detection apps like Revolut. Previously this was
-	// restricted to non-app paths on iOS 16+ (only needed for developer_mode_status),
-	// but we now also need it to fake kern.boottime and KERN_PROC start times.
+	// Hook sysctl, clock_gettime, and NSProcessInfo.systemUptime in every
+	// process to hide respring artifacts from jailbreak-detection SDKs.
 	litehook_hook_function(__sysctl, __sysctl_hook);
 	litehook_hook_function(__sysctlbyname, __sysctlbyname_hook);
+	litehook_hook_function(clock_gettime, clock_gettime_hook);
+	// NSProcessInfo uses ObjC method swizzle; dispatch after Foundation is ready
+	dispatch_async(dispatch_get_main_queue(), ^{ rh_hook_nsprocessinfo(); });
 
 #ifndef __arm64e__
 	if(strcmp(executable, "/System/Library/Frameworks/LocalAuthentication.framework/Support/coreauthd")==0

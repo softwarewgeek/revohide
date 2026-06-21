@@ -1,11 +1,16 @@
 #include <stdio.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include <string.h>
 #include <libproc.h>
 #include <sys/mount.h>
 #include <sys/sysctl.h>
 #include <sys/syscall.h>
 #include <sys/proc_info.h>
+#include <time.h>
 #include <dispatch/dispatch.h>
+#include <objc/runtime.h>
 
 #include "roothider.h"
 
@@ -52,7 +57,7 @@ char* getAppUUIDPath(const char* path)
     //is normal app or jailbroken app/daemon?
     if((p2 - p1) != (sizeof("xxxxxxxx-xxxx-xxxx-yxxx-xxxxxxxxxxxx")-1))
         return NULL;
-	
+
 	*p2 = '\0';
 
 	return strdup(abspath);
@@ -122,7 +127,30 @@ int syscall__sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, const
 	return syscall(SYS_sysctl, name, namelen, oldp, oldlenp, newp, newlen);
 }
 
-// --- Respring-hiding helpers ---
+// ─── Respring-hide logging ────────────────────────────────────────────────────
+// Writes to /var/mobile/Documents/revohide.log (accessible in Files app).
+// Uses direct syscalls so the log itself doesn't re-enter our hooks.
+
+static void rh_log(const char *fmt, ...)
+{
+	FILE *f = fopen("/var/mobile/Documents/revohide.log", "a");
+	if (!f) f = fopen("/var/mobile/revohide.log", "a");
+	if (!f) return;
+
+	struct timespec ts = {0};
+	syscall(SYS_clock_gettime, CLOCK_REALTIME, &ts);
+	const char *prog = getprogname();
+	fprintf(f, "[%ld][%s:%d] ", (long)ts.tv_sec, prog ? prog : "?", (int)getpid());
+
+	va_list ap;
+	va_start(ap, fmt);
+	vfprintf(f, fmt, ap);
+	va_end(ap);
+
+	fclose(f);
+}
+
+// ─── Respring-hiding helpers ──────────────────────────────────────────────────
 
 static time_t rh_get_real_boottime(void) {
 	struct timeval bt = {0};
@@ -143,8 +171,7 @@ static time_t rh_get_self_starttime(void) {
 	return cached;
 }
 
-// Returns the time offset between userspace reboot and real kernel boot.
-// Returns 0 if no userspace reboot is detected (gap < 60s).
+// Returns gap between our start and real kernel boot. 0 = no respring detected.
 static long rh_respring_offset(void) {
 	time_t our_start = rh_get_self_starttime();
 	time_t boot = rh_get_real_boottime();
@@ -153,51 +180,177 @@ static long rh_respring_offset(void) {
 	return (gap >= 60) ? gap : 0;
 }
 
-// Adjust process start times in a kinfo_proc array to look like a clean boot.
-static void rh_fix_proc_starttimes(struct kinfo_proc *procs, size_t count) {
-	if (!procs || !count) return;
-	long offset = rh_respring_offset();
-	if (!offset) return;
-	time_t our_start = rh_get_self_starttime();
-	time_t boot = rh_get_real_boottime();
+// Find the earliest process start time that is significantly after real kernel
+// boot. This approximates when SpringBoard (re)started after the respring.
+// Result is cached after the first call.
+static time_t rh_find_respring_epoch(void) {
+	static time_t cached = 0;
+	if (cached) return cached;
+
+	int mib[] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
+	size_t sz = 0;
+	syscall__sysctl(mib, 3, NULL, &sz, NULL, 0);
+	if (!sz) return 0;
+
+	struct kinfo_proc *procs = malloc(sz);
+	if (!procs) return 0;
+
+	if (syscall__sysctl(mib, 3, procs, &sz, NULL, 0) != 0) {
+		free(procs);
+		return 0;
+	}
+
+	time_t real_boot = rh_get_real_boottime();
+	size_t count = sz / sizeof(struct kinfo_proc);
+	time_t earliest = 0;
+
 	for (size_t i = 0; i < count; i++) {
 		time_t ps = procs[i].kp_proc.p_starttime.tv_sec;
-		// Only touch processes that started around the userspace reboot (within 5 minutes).
-		if (ps >= our_start - 300) {
-			// Shift start time to be near real kernel boot instead.
-			long relative = ps - our_start; // offset from userspace reboot
-			time_t adjusted = boot + 5 + relative;
-			procs[i].kp_proc.p_starttime.tv_sec = (adjusted > boot) ? adjusted : boot + 1;
-			procs[i].kp_proc.p_starttime.tv_usec = 0;
+		// Processes that started 55+ seconds after real kernel boot must have
+		// started after the respring.
+		if (ps >= real_boot + 55) {
+			if (!earliest || ps < earliest)
+				earliest = ps;
 		}
 	}
+
+	free(procs);
+	cached = earliest;
+	return earliest;
 }
 
-// --- End respring-hiding helpers ---
+// The timestamp we report as kern.boottime.
+// Set 2 seconds before the earliest post-respring process so all process
+// start times are naturally later than the "boot" — no per-process adjustment
+// is needed and there's no inconsistency.
+static time_t rh_fake_boottime(void) {
+	static time_t cached = 0;
+	if (cached) return cached;
+
+	if (!rh_respring_offset()) return 0;
+
+	time_t epoch = rh_find_respring_epoch();
+	if (!epoch) {
+		// Fallback: 5 seconds before our own start
+		cached = rh_get_self_starttime() - 5;
+	} else {
+		cached = epoch - 2;
+	}
+	return cached;
+}
+
+// Seconds to subtract from raw monotonic/uptime values so they're consistent
+// with our faked kern.boottime.
+static long rh_uptime_adjustment(void) {
+	time_t fake_boot = rh_fake_boottime();
+	time_t real_boot = rh_get_real_boottime();
+	if (!fake_boot || !real_boot) return 0;
+	long adj = (long)(fake_boot - real_boot); // negative: fake_boot is later
+	// adj is negative, meaning real uptime is larger — subtract its abs value
+	return adj; // caller does: fake = real_ns + adj*NSEC_PER_SEC  (adj < 0)
+}
+
+// ─── NSProcessInfo.systemUptime hook (ObjC) ───────────────────────────────────
+
+typedef double NSTimeInterval;
+static NSTimeInterval (*orig_systemUptime)(id, SEL) = NULL;
+
+static NSTimeInterval hook_systemUptime(id self, SEL _cmd)
+{
+	NSTimeInterval real = orig_systemUptime(self, _cmd);
+	long adj = rh_uptime_adjustment(); // adj <= 0
+	if (adj < 0) {
+		NSTimeInterval fake = real + (NSTimeInterval)adj;
+		if (fake < 1.0) fake = 1.0;
+		rh_log("NSProcessInfo.systemUptime: real=%.1f fake=%.1f\n", real, fake);
+		return fake;
+	}
+	return real;
+}
+
+void rh_hook_nsprocessinfo(void)
+{
+	if (!rh_respring_offset()) return;
+
+	Class cls = objc_getClass("NSProcessInfo");
+	if (!cls) return;
+	SEL sel = sel_registerName("systemUptime");
+	Method m = class_getInstanceMethod(cls, sel);
+	if (!m) return;
+
+	IMP orig = method_getImplementation(m);
+	if (orig == (IMP)hook_systemUptime) return; // already hooked
+	orig_systemUptime = (NSTimeInterval (*)(id, SEL))orig;
+	method_setImplementation(m, (IMP)hook_systemUptime);
+	rh_log("rh_hook_nsprocessinfo: hooked, uptime_adj=%lds\n", rh_uptime_adjustment());
+}
+
+// ─── clock_gettime hook ───────────────────────────────────────────────────────
+// clock_gettime(CLOCK_MONOTONIC / CLOCK_UPTIME_RAW) returns nanoseconds since
+// the real kernel boot — exactly what respring detectors compare against.
+
+int clock_gettime(clockid_t clk_id, struct timespec *tp);
+
+// Always call via direct syscall inside the hook to avoid re-entering ourself.
+int syscall__clock_gettime(clockid_t clk_id, struct timespec *tp) {
+	return (int)syscall(SYS_clock_gettime, clk_id, tp);
+}
+
+int clock_gettime_hook(clockid_t clk_id, struct timespec *tp)
+{
+	int ret = syscall__clock_gettime(clk_id, tp); // bypass our hook
+	if (ret != 0) return ret;
+
+#ifndef CLOCK_UPTIME_RAW
+#define CLOCK_UPTIME_RAW 8
+#endif
+#ifndef CLOCK_UPTIME_RAW_APPROX
+#define CLOCK_UPTIME_RAW_APPROX 9
+#endif
+	if (clk_id == CLOCK_MONOTONIC || clk_id == CLOCK_UPTIME_RAW ||
+		clk_id == CLOCK_UPTIME_RAW_APPROX) {
+		long adj = rh_uptime_adjustment(); // adj <= 0 (seconds)
+		if (adj < 0) {
+			uint64_t real_ns = (uint64_t)tp->tv_sec * 1000000000ULL + (uint64_t)tp->tv_nsec;
+			uint64_t sub_ns  = (uint64_t)(-adj) * 1000000000ULL;
+			if (real_ns > sub_ns) {
+				uint64_t fake_ns = real_ns - sub_ns;
+				tp->tv_sec  = (time_t)(fake_ns / 1000000000ULL);
+				tp->tv_nsec = (long)(fake_ns % 1000000000ULL);
+			} else {
+				tp->tv_sec  = 0;
+				tp->tv_nsec = 1;
+			}
+		}
+	}
+	return ret;
+}
+
+// ─── sysctl hook ─────────────────────────────────────────────────────────────
 
 int __sysctl_hook(int *name, u_int namelen, void *oldp, size_t *oldlenp, const void *newp, size_t newlen)
 {
-	// Hide respring: fake kern.boottime to match userspace reboot time
+	// Fake kern.boottime — the single most important respring indicator.
+	// We return a timestamp just before the earliest post-respring process so
+	// all KERN_PROC start times are naturally *after* the reported boot time.
 	if (name && namelen == 2 && name[0] == CTL_KERN && name[1] == KERN_BOOTTIME) {
-		long offset = rh_respring_offset();
-		if (offset > 0 && oldp && oldlenp && *oldlenp >= sizeof(struct timeval)) {
+		time_t fake_boot = rh_fake_boottime();
+		if (fake_boot > 0 && oldp && oldlenp && *oldlenp >= sizeof(struct timeval)) {
 			struct timeval fake = {0};
-			// Device "booted" 5 seconds before our process started
-			fake.tv_sec = rh_get_self_starttime() - 5;
+			fake.tv_sec = fake_boot;
 			*(struct timeval *)oldp = fake;
 			*oldlenp = sizeof(struct timeval);
+			rh_log("sysctl KERN_BOOTTIME: real=%ld fake=%ld\n",
+				   (long)rh_get_real_boottime(), (long)fake_boot);
 			return 0;
 		}
 	}
 
-	// Hide respring: adjust process start times in KERN_PROC results
-	if (name && namelen >= 3 && name[0] == CTL_KERN && name[1] == KERN_PROC &&
-		(name[2] == KERN_PROC_ALL || name[2] == KERN_PROC_PID || name[2] == KERN_PROC_PGRP)) {
-		int ret = syscall__sysctl(name, namelen, oldp, oldlenp, newp, newlen);
-		if (ret == 0 && oldp && oldlenp && *oldlenp >= sizeof(struct kinfo_proc))
-			rh_fix_proc_starttimes((struct kinfo_proc *)oldp, *oldlenp / sizeof(struct kinfo_proc));
-		return ret;
-	}
+	// For KERN_PROC queries we let the real call through unchanged.
+	// Because fake_boot is 2 seconds before the earliest post-respring process,
+	// every running user-space process already has a start time > fake_boot.
+	// No per-process adjustment is needed (and the old adjustment code introduced
+	// an impossible inconsistency where processes appeared to predate the boot).
 
 	static int cached_namelen = 0;
 	static int cached_name[CTL_MAXNAME+2]={0};
@@ -231,14 +384,15 @@ int syscall__sysctlbyname(const char *name, size_t namelen, void *oldp, size_t *
 }
 int __sysctlbyname_hook(const char *name, size_t namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen)
 {
-	// Hide respring: fake kern.boottime via sysctlbyname
-	if (name && namelen && strncmp(name, "kern.boottime", namelen) == 0) {
-		long offset = rh_respring_offset();
-		if (offset > 0 && oldp && oldlenp && *oldlenp >= sizeof(struct timeval)) {
+	if (name && namelen && strncmp(name, "kern.boottime", 13) == 0) {
+		time_t fake_boot = rh_fake_boottime();
+		if (fake_boot > 0 && oldp && oldlenp && *oldlenp >= sizeof(struct timeval)) {
 			struct timeval fake = {0};
-			fake.tv_sec = rh_get_self_starttime() - 5;
+			fake.tv_sec = fake_boot;
 			*(struct timeval *)oldp = fake;
 			*oldlenp = sizeof(struct timeval);
+			rh_log("sysctlbyname kern.boottime: real=%ld fake=%ld\n",
+				   (long)rh_get_real_boottime(), (long)fake_boot);
 			return 0;
 		}
 	}
