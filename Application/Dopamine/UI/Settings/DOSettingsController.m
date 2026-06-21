@@ -24,8 +24,8 @@
 // ─── Revohide hook-log viewer ─────────────────────────────────────────────────
 // Inline class so no extra Xcode project entries are needed.
 
-#define RH_LOG_PATH  @"/var/mobile/Documents/revohide.log"
-#define RH_LOG_PATH2 @"/var/mobile/revohide.log"
+#define RH_LOG_PATH  @"/tmp/revohide.log"
+#define RH_LOG_PATH2 @"/private/tmp/revohide.log"
 
 @interface DORevohideLogViewController : UIViewController
 @property (nonatomic, strong) UITextView *textView;
@@ -49,10 +49,13 @@
     UIBarButtonItem *share = [[UIBarButtonItem alloc]
         initWithBarButtonSystemItem:UIBarButtonSystemItemAction
         target:self action:@selector(shareLog)];
+    UIBarButtonItem *copy = [[UIBarButtonItem alloc]
+        initWithTitle:@"Copy" style:UIBarButtonItemStylePlain
+        target:self action:@selector(copyLog)];
     UIBarButtonItem *clear = [[UIBarButtonItem alloc]
         initWithTitle:@"Clear" style:UIBarButtonItemStylePlain
         target:self action:@selector(clearLog)];
-    self.navigationItem.rightBarButtonItems = @[share, clear];
+    self.navigationItem.rightBarButtonItems = @[share, copy, clear];
 
     _textView = [[UITextView alloc] initWithFrame:self.view.bounds];
     _textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -105,6 +108,22 @@
         initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];
     ac.popoverPresentationController.barButtonItem = self.navigationItem.rightBarButtonItems.firstObject;
     [self presentViewController:ac animated:YES completion:nil];
+}
+
+- (void)copyLog {
+    NSString *text = _textView.text;
+    if (!text.length) {
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:@"No Log"
+            message:@"Log file is empty." preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:a animated:YES completion:nil];
+        return;
+    }
+    [[UIPasteboard generalPasteboard] setString:text];
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Copied"
+        message:@"Log copied to clipboard." preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 
 - (void)clearLog {

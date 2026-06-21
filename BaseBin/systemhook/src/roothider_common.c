@@ -129,18 +129,23 @@ int syscall__sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, const
 }
 
 // ─── Respring-hide logging ────────────────────────────────────────────────────
-// Writes to /var/mobile/Documents/revohide.log (accessible in Files app).
-// Uses direct syscalls so the log itself doesn't re-enter our hooks.
+// Writes to /tmp/revohide.log — /tmp is cleared on reboot, invisible to Files
+// app and unlikely to be scanned by apps. Uses time(NULL) to avoid re-entering
+// hooked functions.
 
 static void rh_log(const char *fmt, ...)
 {
-	FILE *f = fopen("/var/mobile/Documents/revohide.log", "a");
-	if (!f) f = fopen("/var/mobile/revohide.log", "a");
+	FILE *f = fopen("/tmp/revohide.log", "a");
 	if (!f) return;
 
-	// Use time(NULL) — avoids calling clock_gettime which we hook ourselves.
+	// Human-readable timestamp: "HH:MM:SS"
+	time_t now = time(NULL);
+	struct tm *tm_info = localtime(&now);
+	char timebuf[16] = "??:??:??";
+	if (tm_info) strftime(timebuf, sizeof(timebuf), "%H:%M:%S", tm_info);
+
 	const char *prog = getprogname();
-	fprintf(f, "[%ld][%s:%d] ", (long)time(NULL), prog ? prog : "?", (int)getpid());
+	fprintf(f, "[%s][%s:%d] ", timebuf, prog ? prog : "?", (int)getpid());
 
 	va_list ap;
 	va_start(ap, fmt);
