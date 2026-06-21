@@ -574,7 +574,7 @@ jobs:
           export BASEDIR="$(pwd)"
           export THEOS="${BASEDIR}/theos"
           XSDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          rm -f $XSDK/usr/include/xpc $XSDK/usr/include/xpc.modulemap
+          rm -rf "$XSDK/usr/include/xpc" "$XSDK/usr/include/xpc.modulemap"
           gmake -j$(sysctl -n hw.physicalcpu)
           VERSION=$(cat ./BaseBin/_external/basebin/.version)-$(git rev-parse --short HEAD)
           mv ./Application/Dopamine.tipa "./Application/roothide-Dopamine-${VERSION}.tipa"
