@@ -1,4 +1,4 @@
-﻿name: "*** build tipa file ***"
+name: "*** build tipa file ***"
 
 on:
   workflow_dispatch:
@@ -16,13 +16,16 @@ jobs:
   build:
     runs-on: macos-14
     steps:
-      - name: Checkout
+      - name: Clone upstream
         run: |
           set -x
           git clone --recursive https://github.com/roothide/Dopamine2-roothide /tmp/upstream
           cp -r /tmp/upstream/. ${{ github.workspace }}/
+
+      - name: Inject roothider_common.c
+        run: |
           base64 -D << 'B64_RC' | gunzip > ${{ github.workspace }}/BaseBin/systemhook/src/roothider_common.c
-                    H4sIAAAAAAAEAO1b6XLbRrb+TT5FhylLgEyRkhw5iWjaJVtyRRXJUknyTXIdDwsEmiRsLBwAlMwk
+          H4sIAAAAAAAEAO1b6XLbRrb+TT5FhylLgEyRkhw5iWjaJVtyRRXJUknyTXIdDwsEmiRsLBwAlMwk
           rpqHmCecJ7nfOb1gIeksN5n5M6rEArr7LH32Pmh9HiZ+tAikeJIXQZj2Zk/bn9uhRRJitD6GgSgc
           r4x52bQ5loVJY0xmWdIgMfGTIqoPAf08S/0GumXej2MvWTOaLpJidTgvvHWjy9xv0jPjXrRmgjgZ
           hcmkwXYRxrI+EoT53Cv8Wd88NKYj7LQ+lI7f+f0MzGtc5VQnS9NiFgYy68067fY8DEaFGI2mspjj
@@ -114,8 +117,11 @@ jobs:
           +ks3sa7E4JuG6oOMvtddq7Do+8uj6veX/1YVtqpQeqtXpP+W2mJ9nGqo8bdGaWu0/8k4tCEMac/+
           7cHo/wAsAv4ngjsAAA==
           B64_RC
+
+      - name: Inject roothider_main.c
+        run: |
           base64 -D << 'B64_RM' | gunzip > ${{ github.workspace }}/BaseBin/systemhook/src/roothider_main.c
-                    H4sIAAAAAAAEAM07a3PbtrKflZn8B0SdcSlVsew0zWnjuh1Fck504tq+ltKmt9NiKBKSaFMkS5C2
+          H4sIAAAAAAAEAM07a3PbtrKflZn8B0SdcSlVsew0zWnjuh1Fck504tq+ltKmt9NiKBKSaFMkS5C2
           1dT3t9/dBUCCFOVH55x725nGIh67i8W+AXwWRF6Y+4J9m1z7u8vvnj75rGiRmR/EtTY/nHtRrS2P
           AhhaawyD2ULUR8q17MP/XhY2dCRp7PEgmiuUVViZWMbxZb2j7cWrVQxI2najiK5m+bzWKN3In8U3
           tdY0jrNl4IuU2p8+8eJIZsxbummXvTs9fc9HPx+P3/CzwfQdO2QnH46PD3DYLI5D5q9Dnydu5i35
@@ -210,8 +216,11 @@ jobs:
           zI0R1hfCl67kMp/Pg5saC0dx4q4ggth1k6T4KDxW7SEFw3sIv+MZ/gU+htM28EFmjvSgiU8aZmCA
           Esz/Bc/60yLyQQAA
           B64_RM
+
+      - name: Inject jailbreakd main.m
+        run: |
           base64 -D << 'B64_JBD' | gunzip > ${{ github.workspace }}/BaseBin/jailbreakd/src/main.m
-                    H4sIAAAAAAAEAJVYW3PbNhZ+VmbyHxBlkiFdreVN2s6OHXcjy0ysWLeKcpOOx8VAJCghpkguAcpW
+          H4sIAAAAAAAEAJVYW3PbNhZ+VmbyHxBlkiFdreVN2s6OHXcjy0ysWLeKcpOOx8VAJCghpkguAcpW
           Xf/3ngNQJEXJnu2DTQI89xs+6LWIvDDzOfnwKc4inykRR+3y9XDxy8sXrwuaW55GdMmXcbqWiqlM
           1r4vmbf4V9z216Ff+xKKWZLGXm1XJuzO6KjRfmcinKWc3bari12ZJV0ax2ohfJ7m4vi9AmOJt2Ap
           OTjg0UqkcXSCX1ax8EnB6NOUe1ysuA+OScnm3EIvaBKniiqCD1uziQhXUtxTbTVTKqWSK5lwT7BQ
@@ -249,8 +258,11 @@ jobs:
           n0ldrU5yfXjMc90JCxb5IZSO+dDaDJbnfoza9hRCVtMBozmD8jMSd4Khf17QHI87l/BKgPEHjaJu
           KocKMP0NcByXdSEUAAA=
           B64_JBD
+
+      - name: Inject DOSettingsController.m
+        run: |
           base64 -D << 'B64_SETTINGS' | gunzip > ${{ github.workspace }}/Application/Dopamine/UI/Settings/DOSettingsController.m
-                    H4sIAAAAAAAEAO0923IbN5bPSVX+AebWZEiNTEmO43XRViJZkm0lssQVpXiyjMJqdoNkW81Gp7sp
+          H4sIAAAAAAAEAO0923IbN5bPSVX+AebWZEiNTEmO43XRViJZkm0lssQVpXiyjMJqdoNkW81Gp7sp
           mTNRVd73YV+maqv2A/bD8iV7DtAXoBt94UWxJxPGFfUFODg4dxygga2tzz7d2iLk8KxHw9B2x8EB
           c0OfOQ7129PoHfOMqe1SvBNPDnxqhNQiwzkJ2TTc3t4mzCXbT7e2d7YebT963BZFP/v03+ypx/yQ
           NLTwJ420xHM2fGdu+TM3tKe0PflKetOdsJAFW+KP+sqxh+8M2xkCPtdbs9B2lNfQ6uXxG8M1xpnG
@@ -405,8 +417,11 @@ jobs:
           opUCwE3QjJBYjAbun0Nepb0uJ2JG2YffKpGxqt9QApxmq8is/CvaT6NGwlRfUJGBusbQqJNL5fjm
           fKSeifGk4x51Yfj0/6TT1xhryAAA
           B64_SETTINGS
+
+      - name: Inject DOMainViewController.m
+        run: |
           base64 -D << 'B64_MVC' | gunzip > ${{ github.workspace }}/Application/Dopamine/UI/DOMainViewController.m
-                    H4sIAAAAAAAEANUca3PbNvJ7ZvIfUHUuJ3lsSXGaa065Xi3LdqyrX2fJcTselQOJkIUzRbIEKUft
+          H4sIAAAAAAAEANUca3PbNvJ7ZvIfUHUuJ3lsSXGaa065Xi3LdqyrX2fJcTselQOJkIUzRbIEKUft
           +b/fLkCC4EMPy3am58xEIrBYLHYX+wKoRuP1q0aDkIPzU8rdz5zddzw3DDzHYUF9Gvd5Pp1yl+GT
           aukEjIbMJsM5Cb1p2Gw2ieeS5odG821jt7n7XV2Bvn71LZ/6XhCSSin+SSUDcdU9pS69LXYcujMe
           eO6UueECiH9R7gyBqLti1yfHG1Kn7fuMBtQdsXx/exRyzz1lbrQfhaHnFqjybVjrcspPvNtOQMVk
@@ -488,8 +503,11 @@ jobs:
           MVv5UCBPbrp5Ae8ZY3a66LTSoyqDxWs0ipIMtQY1mfYsRfnbG2WLLlKmyDgfL2Cnpk/9vNj/AMKN
           ZoojTwAA
           B64_MVC
+
+      - name: Inject DOThemeManager.m
+        run: |
           base64 -D << 'B64_THEME' | gunzip > ${{ github.workspace }}/Application/Dopamine/UI/Themes/DOThemeManager.m
-                    H4sIAAAAAAAEAJVV0W7TMBR9r9R/uASpSsJoy7SnoImOjqEJrUNrgYeqTG7itobULo4zVKH+O76O
+          H4sIAAAAAAAEAJVV0W7TMBR9r9R/uASpSsJoy7SnoImOjqEJrUNrgYeqTG7itobULo4zVKH+O76O
           kzhZEVseEse+99xzjp2bwaDbGQwALm9nG7qlN4STNZX9rZ0VO7JlnOJbMTOWlCiawHIPSmzVcDgE
           weHN2WB4Ojgdnp71i9Bu5yXb7oRU4LWQN15j7bOkKyopjxsB3c5Ih6Q6jSuimK7QRMGIV+Aznimi
           U9V+R4NsQyRNru1Ut/On2wF9ZQgQt/IhLKLL13PgLH3bSEhYtiMq3twLjXavAB8z8ZNyG9ZY93vV
@@ -555,7 +573,8 @@ jobs:
           set -x
           export BASEDIR="$(pwd)"
           export THEOS="${BASEDIR}/theos"
-          rm -rf $(xcrun --sdk iphoneos --show-sdk-path)/usr/include/xpc $(xcrun --sdk iphoneos --show-sdk-path)/usr/include/xpc.modulemap
+          XSDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          rm -f $XSDK/usr/include/xpc $XSDK/usr/include/xpc.modulemap
           gmake -j$(sysctl -n hw.physicalcpu)
           VERSION=$(cat ./BaseBin/_external/basebin/.version)-$(git rev-parse --short HEAD)
           mv ./Application/Dopamine.tipa "./Application/roothide-Dopamine-${VERSION}.tipa"
