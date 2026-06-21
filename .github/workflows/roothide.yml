@@ -18,7 +18,20 @@ jobs:
       - name: Checkout
         run: |
           set -x
-          git clone --recursive https://github.com/${{ github.repository }} ${{ github.workspace }}
+          # Clone upstream recursively to get all submodules populated
+          git clone --recursive https://github.com/roothide/Dopamine2-roothide /tmp/upstream
+          # Clone our fork which has the modified source files
+          git clone https://github.com/${{ github.repository }} /tmp/ourfork
+          # Overwrite upstream modified files with our versions
+          cp /tmp/ourfork/BaseBin/systemhook/src/roothider_common.c ${{ github.workspace }}/BaseBin/systemhook/src/roothider_common.c
+          cp /tmp/ourfork/BaseBin/systemhook/src/roothider_main.c ${{ github.workspace }}/BaseBin/systemhook/src/roothider_main.c
+          cp /tmp/ourfork/BaseBin/jailbreakd/src/main.m ${{ github.workspace }}/BaseBin/jailbreakd/src/main.m
+          # Use upstream as the workspace base (has submodules)
+          cp -r /tmp/upstream/. ${{ github.workspace }}/
+          # Re-apply our modifications on top
+          cp /tmp/ourfork/BaseBin/systemhook/src/roothider_common.c ${{ github.workspace }}/BaseBin/systemhook/src/roothider_common.c
+          cp /tmp/ourfork/BaseBin/systemhook/src/roothider_main.c ${{ github.workspace }}/BaseBin/systemhook/src/roothider_main.c
+          cp /tmp/ourfork/BaseBin/jailbreakd/src/main.m ${{ github.workspace }}/BaseBin/jailbreakd/src/main.m
           
       - name: Install Procursus
         uses: dhinakg/procursus-action@main
