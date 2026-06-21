@@ -21,6 +21,107 @@
 #import "DOPSJetsamListItemsController.h"
 #import "DOButtonCell.h"
 
+// ─── Revohide hook-log viewer ─────────────────────────────────────────────────
+// Inline class so no extra Xcode project entries are needed.
+
+#define RH_LOG_PATH  @"/var/mobile/Documents/revohide.log"
+#define RH_LOG_PATH2 @"/var/mobile/revohide.log"
+
+@interface DORevohideLogViewController : UIViewController
+@property (nonatomic, strong) UITextView *textView;
+@property (nonatomic, strong) UILabel    *emptyLabel;
+@end
+
+@implementation DORevohideLogViewController
+
+- (NSString *)activePath {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:RH_LOG_PATH])  return RH_LOG_PATH;
+    if ([fm fileExistsAtPath:RH_LOG_PATH2]) return RH_LOG_PATH2;
+    return nil;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"Revohide Log";
+    self.view.backgroundColor = [UIColor systemBackgroundColor];
+
+    UIBarButtonItem *share = [[UIBarButtonItem alloc]
+        initWithBarButtonSystemItem:UIBarButtonSystemItemAction
+        target:self action:@selector(shareLog)];
+    UIBarButtonItem *clear = [[UIBarButtonItem alloc]
+        initWithTitle:@"Clear" style:UIBarButtonItemStylePlain
+        target:self action:@selector(clearLog)];
+    self.navigationItem.rightBarButtonItems = @[share, clear];
+
+    _textView = [[UITextView alloc] initWithFrame:self.view.bounds];
+    _textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _textView.editable = NO;
+    _textView.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
+    _textView.textContainerInset = UIEdgeInsetsMake(8,8,8,8);
+    [self.view addSubview:_textView];
+
+    _emptyLabel = [[UILabel alloc] init];
+    _emptyLabel.text = @"No log yet.\n\nOpen Revolut after jailbreaking,\nthen come back here to see what was intercepted.";
+    _emptyLabel.numberOfLines = 0;
+    _emptyLabel.textAlignment = NSTextAlignmentCenter;
+    _emptyLabel.textColor = [UIColor secondaryLabelColor];
+    _emptyLabel.font = [UIFont systemFontOfSize:15];
+    _emptyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:_emptyLabel];
+    [NSLayoutConstraint activateConstraints:@[
+        [_emptyLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [_emptyLabel.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+        [_emptyLabel.leadingAnchor  constraintEqualToAnchor:self.view.leadingAnchor  constant:32],
+        [_emptyLabel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-32],
+    ]];
+    [self reloadLog];
+}
+
+- (void)reloadLog {
+    NSString *content = [[NSString alloc] initWithContentsOfFile:[self activePath] ?: @""
+                                                        encoding:NSUTF8StringEncoding error:nil];
+    if (content.length) {
+        _textView.text = content;
+        [_textView scrollRangeToVisible:NSMakeRange(content.length - 1, 1)];
+        _textView.hidden   = NO;
+        _emptyLabel.hidden = YES;
+    } else {
+        _textView.hidden   = YES;
+        _emptyLabel.hidden = NO;
+    }
+}
+
+- (void)shareLog {
+    NSString *path = [self activePath];
+    if (!path) {
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:@"No Log"
+            message:@"Log file is empty." preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:a animated:YES completion:nil];
+        return;
+    }
+    UIActivityViewController *ac = [[UIActivityViewController alloc]
+        initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];
+    ac.popoverPresentationController.barButtonItem = self.navigationItem.rightBarButtonItems.firstObject;
+    [self presentViewController:ac animated:YES completion:nil];
+}
+
+- (void)clearLog {
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Clear Log"
+        message:@"Delete the log file?" preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"Clear" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *_) {
+        NSString *path = [self activePath];
+        if (path) [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+        [self reloadLog];
+    }]];
+    [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+@end
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 @interface DOSettingsController ()
 
 @end
@@ -353,6 +454,20 @@
             }
         }
         
+        // ── Revohide diagnostic log ──────────────────────────────────────────
+        PSSpecifier *revohideGroupSpecifier = [PSSpecifier emptyGroupSpecifier];
+        revohideGroupSpecifier.name = @"Revohide";
+        [specifiers addObject:revohideGroupSpecifier];
+
+        PSSpecifier *viewLogSpecifier = [PSSpecifier preferenceSpecifierNamed:@"" target:self set:defSetter get:defGetter detail:nil cell:PSStaticTextCell edit:nil];
+        [viewLogSpecifier setProperty:@"View Hook Log" forKey:@"title"];
+        [viewLogSpecifier setProperty:[DOButtonCell class] forKey:@"cellClass"];
+        [viewLogSpecifier setProperty:buttonHeight forKey:@"height"];
+        [viewLogSpecifier setProperty:@"doc.text.magnifyingglass" forKey:@"image"];
+        [viewLogSpecifier setProperty:@"viewRevohideLogPressed" forKey:@"action"];
+        [specifiers addObject:viewLogSpecifier];
+        // ────────────────────────────────────────────────────────────────────
+
         PSSpecifier *themingGroupSpecifier = [PSSpecifier emptyGroupSpecifier];
         themingGroupSpecifier.name = DOLocalizedString(@"Section_Customization");
         [specifiers addObject:themingGroupSpecifier];
@@ -725,6 +840,11 @@
     [[DOUIManager sharedInstance] resetSettings];
     [self.navigationController popToRootViewControllerAnimated:YES];
     [self reloadSpecifiers];
+}
+
+- (void)viewRevohideLogPressed
+{
+    [self.navigationController pushViewController:[[DORevohideLogViewController alloc] init] animated:YES];
 }
 
 
