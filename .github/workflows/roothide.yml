@@ -11,6 +11,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-14
@@ -95,3 +98,17 @@ jobs:
           name: roothide-Dopamine-${{ env.version }}.tipa
           path: |
             ${{ github.workspace }}/Application/roothide-Dopamine-${{ env.version }}.tipa
+
+      - name: Publish Latest Release
+        run: |
+          set -x
+          TIPA="./Application/roothide-Dopamine-${{ env.version }}.tipa"
+          # Delete previous "latest" release and tag so we can recreate it
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest \
+            --title "Latest Build (${{ env.version }})" \
+            --notes "Auto-built from commit ${{ github.sha }}. Install via TrollStore — rename to .ipa if needed." \
+            --target "${{ github.sha }}" \
+            "$TIPA"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
