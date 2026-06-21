@@ -3,8 +3,12 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <libproc.h>
+#include <sys/mman.h>
 #include <sys/mount.h>
+#include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/syscall.h>
 #include <sys/proc_info.h>
@@ -128,31 +132,81 @@ int syscall__sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, const
 	return syscall(SYS_sysctl, name, namelen, oldp, oldlenp, newp, newlen);
 }
 
-// ─── Respring-hide logging ────────────────────────────────────────────────────
-// Writes to /tmp/revohide.log — /tmp is cleared on reboot, invisible to Files
-// app and unlikely to be scanned by apps. Uses time(NULL) to avoid re-entering
-// hooked functions.
+// ─── Respring-hide logging via POSIX shared memory ───────────────────────────
+// Stored entirely in RAM — no file in /var/mobile, /tmp, or anywhere Revolut
+// might scan. The kernel backs /revohide in anonymous memory; it disappears on
+// reboot. Dopamine's log viewer maps the same segment to display entries.
+
+#define RH_SHM_NAME  "/revohide"
+#define RH_SHM_TOTAL (1 << 18)          // 256 KB
+#define RH_BUF_CAP   (RH_SHM_TOTAL - 8) // minus header
+
+typedef struct {
+	volatile uint32_t write_pos;  // next byte to write (monotonic within buf)
+	volatile uint32_t reserved;
+	char buf[RH_SHM_TOTAL - 8];
+} rh_shm_t;
+
+static rh_shm_t *rh_shm_map(void)
+{
+	static rh_shm_t *ptr = NULL;
+	if (ptr) return ptr;
+
+	int fd = shm_open(RH_SHM_NAME, O_CREAT | O_RDWR, 0600);
+	if (fd < 0) return NULL;
+
+	struct stat st;
+	if (fstat(fd, &st) == 0 && st.st_size == 0)
+		ftruncate(fd, RH_SHM_TOTAL);
+
+	void *m = mmap(NULL, RH_SHM_TOTAL, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	close(fd);
+	if (m == MAP_FAILED) return NULL;
+	ptr = (rh_shm_t *)m;
+	return ptr;
+}
 
 static void rh_log(const char *fmt, ...)
 {
-	FILE *f = fopen("/tmp/revohide.log", "a");
-	if (!f) return;
+	rh_shm_t *shm = rh_shm_map();
+	if (!shm) return;
 
-	// Human-readable timestamp: "HH:MM:SS"
+	char line[512];
 	time_t now = time(NULL);
-	struct tm *tm_info = localtime(&now);
-	char timebuf[16] = "??:??:??";
-	if (tm_info) strftime(timebuf, sizeof(timebuf), "%H:%M:%S", tm_info);
-
+	struct tm *t = localtime(&now);
+	char tbuf[16] = "??:??:??";
+	if (t) strftime(tbuf, sizeof(tbuf), "%H:%M:%S", t);
 	const char *prog = getprogname();
-	fprintf(f, "[%s][%s:%d] ", timebuf, prog ? prog : "?", (int)getpid());
+	int hlen = snprintf(line, sizeof(line), "[%s][%s:%d] ", tbuf, prog ? prog : "?", (int)getpid());
+	if (hlen < 0) hlen = 0;
 
 	va_list ap;
 	va_start(ap, fmt);
-	vfprintf(f, fmt, ap);
+	int blen = vsnprintf(line + hlen, (int)sizeof(line) - hlen, fmt, ap);
 	va_end(ap);
+	if (blen < 0) blen = 0;
 
-	fclose(f);
+	int total = hlen + blen;
+	if (total >= (int)sizeof(line)) total = (int)sizeof(line) - 1;
+
+	uint32_t pos = shm->write_pos;
+	if (pos + (uint32_t)total + 1 > RH_BUF_CAP) {
+		// Slide window: keep last half, discard oldest entries
+		uint32_t keep = RH_BUF_CAP / 2;
+		uint32_t from = pos > keep ? pos - keep : 0;
+		// Advance 'from' to next newline so we don't start mid-line
+		while (from < pos && shm->buf[from] != '\n') from++;
+		if (from < pos) from++;
+		uint32_t newlen = pos - from;
+		memmove(shm->buf, shm->buf + from, newlen);
+		pos = newlen;
+		shm->write_pos = pos;
+	}
+
+	memcpy(shm->buf + pos, line, total);
+	pos += total;
+	shm->buf[pos] = '\0';
+	shm->write_pos = pos;
 }
 
 // ─── Respring-hiding helpers ──────────────────────────────────────────────────

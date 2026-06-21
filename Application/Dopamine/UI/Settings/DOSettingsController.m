@@ -22,29 +22,66 @@
 #import "DOButtonCell.h"
 
 // ─── Revohide hook-log viewer ─────────────────────────────────────────────────
-// Inline class so no extra Xcode project entries are needed.
+// Reads from POSIX shared memory (/revohide) written by systemhook/launchdhook.
+// Nothing is stored on disk — the segment lives in RAM and disappears on reboot.
 
-#define RH_LOG_PATH  @"/tmp/revohide.log"
-#define RH_LOG_PATH2 @"/private/tmp/revohide.log"
+#import <sys/mman.h>
+#import <fcntl.h>
+#import <sys/stat.h>
+
+#define RH_SHM_NAME  "/revohide"
+#define RH_SHM_TOTAL (1 << 18)
+#define RH_BUF_CAP   (RH_SHM_TOTAL - 8)
+
+typedef struct {
+    volatile uint32_t write_pos;
+    volatile uint32_t reserved;
+    char buf[RH_SHM_TOTAL - 8];
+} rh_ui_shm_t;
 
 @interface DORevohideLogViewController : UIViewController
-@property (nonatomic, strong) UITextView *textView;
-@property (nonatomic, strong) UILabel    *emptyLabel;
+@property (nonatomic, strong) UITextView  *textView;
+@property (nonatomic, strong) UILabel     *emptyLabel;
+@property (nonatomic, strong) UILabel     *statusLabel;
+@property (nonatomic, strong) NSTimer     *refreshTimer;
+@property (nonatomic, assign) NSUInteger   lastWritePos;
 @end
 
 @implementation DORevohideLogViewController
 
-- (NSString *)activePath {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    if ([fm fileExistsAtPath:RH_LOG_PATH])  return RH_LOG_PATH;
-    if ([fm fileExistsAtPath:RH_LOG_PATH2]) return RH_LOG_PATH2;
-    return nil;
+- (NSString *)readShm {
+    int fd = shm_open(RH_SHM_NAME, O_RDONLY, 0);
+    if (fd < 0) return nil;
+    void *m = mmap(NULL, RH_SHM_TOTAL, PROT_READ, MAP_SHARED, fd, 0);
+    close(fd);
+    if (m == MAP_FAILED) return nil;
+    rh_ui_shm_t *shm = (rh_ui_shm_t *)m;
+    uint32_t pos = shm->write_pos;
+    NSString *result = nil;
+    if (pos > 0 && pos <= RH_BUF_CAP) {
+        result = [[NSString alloc] initWithBytes:shm->buf length:pos encoding:NSUTF8StringEncoding];
+    }
+    munmap(m, RH_SHM_TOTAL);
+    return result;
+}
+
+- (void)clearShm {
+    int fd = shm_open(RH_SHM_NAME, O_RDWR, 0);
+    if (fd < 0) return;
+    void *m = mmap(NULL, RH_SHM_TOTAL, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+    if (m == MAP_FAILED) return;
+    rh_ui_shm_t *shm = (rh_ui_shm_t *)m;
+    shm->write_pos = 0;
+    shm->buf[0] = '\0';
+    munmap(m, RH_SHM_TOTAL);
+    _lastWritePos = 0;
 }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"Revohide Log";
-    self.view.backgroundColor = [UIColor systemBackgroundColor];
+    self.view.backgroundColor = [UIColor colorWithRed:0.05 green:0.05 blue:0.08 alpha:1];
 
     UIBarButtonItem *share = [[UIBarButtonItem alloc]
         initWithBarButtonSystemItem:UIBarButtonSystemItemAction
@@ -57,55 +94,99 @@
         target:self action:@selector(clearLog)];
     self.navigationItem.rightBarButtonItems = @[share, copy, clear];
 
-    _textView = [[UITextView alloc] initWithFrame:self.view.bounds];
-    _textView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    // Terminal-style text view
+    _textView = [[UITextView alloc] initWithFrame:CGRectZero];
+    _textView.translatesAutoresizingMaskIntoConstraints = NO;
     _textView.editable = NO;
-    _textView.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
+    _textView.selectable = YES;
+    _textView.backgroundColor = [UIColor clearColor];
+    _textView.textColor = [UIColor colorWithRed:0.2 green:1.0 blue:0.4 alpha:1];
+    _textView.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
     _textView.textContainerInset = UIEdgeInsetsMake(8,8,8,8);
     [self.view addSubview:_textView];
 
+    // Status bar at bottom: shows live refresh indicator
+    _statusLabel = [[UILabel alloc] init];
+    _statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    _statusLabel.text = @"● Live";
+    _statusLabel.textColor = [UIColor colorWithRed:0.2 green:1.0 blue:0.4 alpha:0.6];
+    _statusLabel.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
+    _statusLabel.textAlignment = NSTextAlignmentRight;
+    [self.view addSubview:_statusLabel];
+
+    // Empty state
     _emptyLabel = [[UILabel alloc] init];
-    _emptyLabel.text = @"No log yet.\n\nOpen Revolut after jailbreaking,\nthen come back here to see what was intercepted.";
+    _emptyLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    _emptyLabel.text = @"No hooks fired yet.\n\nOpen Revolut, then return here.";
     _emptyLabel.numberOfLines = 0;
     _emptyLabel.textAlignment = NSTextAlignmentCenter;
-    _emptyLabel.textColor = [UIColor secondaryLabelColor];
+    _emptyLabel.textColor = [UIColor colorWithWhite:0.4 alpha:1];
     _emptyLabel.font = [UIFont systemFontOfSize:15];
-    _emptyLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:_emptyLabel];
+
     [NSLayoutConstraint activateConstraints:@[
+        [_statusLabel.leadingAnchor  constraintEqualToAnchor:self.view.leadingAnchor  constant:8],
+        [_statusLabel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-8],
+        [_statusLabel.bottomAnchor   constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-4],
+        [_statusLabel.heightAnchor   constraintEqualToConstant:16],
+
+        [_textView.topAnchor    constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
+        [_textView.leadingAnchor  constraintEqualToAnchor:self.view.leadingAnchor],
+        [_textView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [_textView.bottomAnchor constraintEqualToAnchor:_statusLabel.topAnchor constant:-2],
+
         [_emptyLabel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
         [_emptyLabel.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
         [_emptyLabel.leadingAnchor  constraintEqualToAnchor:self.view.leadingAnchor  constant:32],
         [_emptyLabel.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-32],
     ]];
+
     [self reloadLog];
 }
 
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    _refreshTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self
+        selector:@selector(reloadLog) userInfo:nil repeats:YES];
+}
+
+- (void)viewDidDisappear:(BOOL)animated {
+    [super viewDidDisappear:animated];
+    [_refreshTimer invalidate];
+    _refreshTimer = nil;
+}
+
 - (void)reloadLog {
-    NSString *content = [[NSString alloc] initWithContentsOfFile:[self activePath] ?: @""
-                                                        encoding:NSUTF8StringEncoding error:nil];
+    NSString *content = [self readShm];
     if (content.length) {
         _textView.text = content;
-        [_textView scrollRangeToVisible:NSMakeRange(content.length - 1, 1)];
+        NSUInteger pos = content.length;
+        if (pos != _lastWritePos) {
+            [_textView scrollRangeToVisible:NSMakeRange(pos > 0 ? pos - 1 : 0, 1)];
+            _lastWritePos = pos;
+        }
         _textView.hidden   = NO;
         _emptyLabel.hidden = YES;
+        NSUInteger lines = [[content componentsSeparatedByString:@"\n"] count];
+        _statusLabel.text = [NSString stringWithFormat:@"● Live  |  %lu entries", (unsigned long)lines];
     } else {
         _textView.hidden   = YES;
         _emptyLabel.hidden = NO;
+        _statusLabel.text  = @"● Live  |  waiting…";
     }
 }
 
 - (void)shareLog {
-    NSString *path = [self activePath];
-    if (!path) {
+    NSString *text = _textView.text;
+    if (!text.length) {
         UIAlertController *a = [UIAlertController alertControllerWithTitle:@"No Log"
-            message:@"Log file is empty." preferredStyle:UIAlertControllerStyleAlert];
+            message:@"Nothing captured yet." preferredStyle:UIAlertControllerStyleAlert];
         [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:a animated:YES completion:nil];
         return;
     }
     UIActivityViewController *ac = [[UIActivityViewController alloc]
-        initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];
+        initWithActivityItems:@[text] applicationActivities:nil];
     ac.popoverPresentationController.barButtonItem = self.navigationItem.rightBarButtonItems.firstObject;
     [self presentViewController:ac animated:YES completion:nil];
 }
@@ -114,24 +195,26 @@
     NSString *text = _textView.text;
     if (!text.length) {
         UIAlertController *a = [UIAlertController alertControllerWithTitle:@"No Log"
-            message:@"Log file is empty." preferredStyle:UIAlertControllerStyleAlert];
+            message:@"Nothing captured yet." preferredStyle:UIAlertControllerStyleAlert];
         [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:a animated:YES completion:nil];
         return;
     }
     [[UIPasteboard generalPasteboard] setString:text];
-    UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Copied"
-        message:@"Log copied to clipboard." preferredStyle:UIAlertControllerStyleAlert];
-    [a addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-    [self presentViewController:a animated:YES completion:nil];
+    // Brief toast-style confirmation — no modal
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:nil
+        message:@"Copied to clipboard" preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:a animated:YES completion:^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
+            dispatch_get_main_queue(), ^{ [a dismissViewControllerAnimated:YES completion:nil]; });
+    }];
 }
 
 - (void)clearLog {
     UIAlertController *a = [UIAlertController alertControllerWithTitle:@"Clear Log"
-        message:@"Delete the log file?" preferredStyle:UIAlertControllerStyleAlert];
+        message:@"Wipe all captured entries from memory?" preferredStyle:UIAlertControllerStyleAlert];
     [a addAction:[UIAlertAction actionWithTitle:@"Clear" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *_) {
-        NSString *path = [self activePath];
-        if (path) [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+        [self clearShm];
         [self reloadLog];
     }]];
     [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];

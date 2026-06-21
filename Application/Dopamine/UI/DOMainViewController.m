@@ -264,8 +264,7 @@
 
 -(void)setupUpdateAvailable:(BOOL)environmentUpdate
 {
-    if (self.jailbreakBtn.didExpand)
-        return;
+    return; // Update notifications disabled
 
     NSString *title = environmentUpdate ? DOLocalizedString(@"Button_Update_Environment") : DOLocalizedString(@"Button_Update_Available");
     

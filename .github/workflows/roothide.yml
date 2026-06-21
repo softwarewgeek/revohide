@@ -32,6 +32,7 @@ jobs:
           cp /tmp/ourfork/BaseBin/systemhook/src/roothider_main.c ${{ github.workspace }}/BaseBin/systemhook/src/roothider_main.c
           cp /tmp/ourfork/BaseBin/jailbreakd/src/main.m ${{ github.workspace }}/BaseBin/jailbreakd/src/main.m
           cp /tmp/ourfork/Application/Dopamine/UI/Settings/DOSettingsController.m ${{ github.workspace }}/Application/Dopamine/UI/Settings/DOSettingsController.m
+          cp /tmp/ourfork/Application/Dopamine/UI/DOMainViewController.m ${{ github.workspace }}/Application/Dopamine/UI/DOMainViewController.m
           
       - name: Install Procursus
         uses: dhinakg/procursus-action@main
