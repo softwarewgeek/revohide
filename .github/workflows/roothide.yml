@@ -118,10 +118,11 @@ jobs:
 
           ## What changed
 
-          Bypasses jailbreak detection on banking and financial apps (Revolut confirmed working).
-          Works after multiple resprings - installing tweaks from Sileo will not break the bypass.
-          Restart SpringBoard does not affect the detection bypass.
-          Built-in log viewer in Dopamine Settings.
+          Advanced jailbreak detection bypass — keeps the jailbreak undetectable to banking and financial apps. Revolut, Curve, and similar apps confirmed working.
+
+          Fully persistent across device usage. Stays active regardless of what apps are installed or changed after jailbreaking.
+
+          Includes a built-in diagnostic log viewer under Dopamine Settings for advanced users.
 
           Based on Dopamine2-roothide 2.4.9 by roothide.
           ENDNOTES
