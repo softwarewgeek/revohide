@@ -104,8 +104,9 @@ jobs:
           set -x
           TIPA="./Application/roothide-Dopamine-${{ env.version }}.tipa"
           # Delete previous "latest" release and tag so we can recreate it
-          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release delete latest --yes --cleanup-tag --repo "${{ github.repository }}" 2>/dev/null || true
           gh release create latest \
+            --repo "${{ github.repository }}" \
             --title "Latest Build (${{ env.version }})" \
             --notes "Auto-built from commit ${{ github.sha }}. Install via TrollStore — rename to .ipa if needed." \
             --target "${{ github.sha }}" \
